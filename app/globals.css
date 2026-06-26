@@ -1,0 +1,101 @@
+/* ============================================================
+   DAHU CAISSE — Styles globaux
+   Charte reprise du site vitrine : violet néon UV sur noir violacé.
+   ============================================================ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --violet: #7c3aed;
+  --violet-light: #a78bfa;
+  --violet-glow: #8b5cf6;
+  --violet-deep: #4c1d95;
+  --link-blue: #5eb3ff;
+  --dark-bg: #0a0710;
+  --card-bg: #120d1c;
+  --card-border: #241a38;
+  --text-main: #f2eefb;
+  --text-muted: #9a8fb0;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent; /* pas de flash bleu au tap mobile */
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--dark-bg);
+  color: var(--text-main);
+  font-family: var(--font-rajdhani), "Rajdhani", sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  /* Empêche le zoom involontaire au double-tap en caisse */
+  touch-action: manipulation;
+}
+
+/* Bandeau violet dégradé (signature Dahu) */
+.dahu-banner {
+  height: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--violet-deep),
+    var(--violet),
+    var(--violet-light),
+    var(--violet),
+    var(--violet-deep)
+  );
+}
+
+/* Divider violet */
+.dahu-divider {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--violet),
+    var(--violet-light),
+    var(--violet),
+    transparent
+  );
+}
+
+/* Titres en Bebas Neue */
+.font-display {
+  font-family: var(--font-bebas), "Bebas Neue", sans-serif;
+}
+
+/* Halo violet sur le logo */
+.logo-glow {
+  filter: drop-shadow(0 0 18px rgba(139, 92, 246, 0.55));
+}
+
+/* Scrollbar violette */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0710;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--violet);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--violet-light);
+}
+
+/* Respecte la préférence "réduire les animations" */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
