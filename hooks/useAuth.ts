@@ -1,10 +1,11 @@
 // ============================================================
-// Hook auth — session + profil courant (côté client)
+// Hook auth — session + profil courant (100% côté client)
 // ============================================================
 "use client";
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { asset } from "@/lib/utils";
 import type { Profile } from "@/types/database";
 
 export function useAuth() {
@@ -44,7 +45,7 @@ export function useAuth() {
   const signOut = async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
-    window.location.href = "/login";
+    window.location.href = asset("/login/");
   };
 
   return { profile, loading, isAdmin: profile?.role === "admin", signOut };

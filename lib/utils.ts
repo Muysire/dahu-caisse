@@ -63,3 +63,13 @@ export function movementLabel(type: string): string {
   };
   return labels[type] ?? type;
 }
+
+/**
+ * Préfixe un chemin d'asset local avec le basePath GitHub Pages.
+ * Ex: asset("/images/logo.png") -> "/dahu-caisse/images/logo.png" en prod.
+ * (Inutile pour les URL Supabase qui sont déjà absolues.)
+ */
+export function asset(path: string): string {
+  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  return `${base}${path}`;
+}

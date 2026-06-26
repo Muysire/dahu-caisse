@@ -1,10 +1,21 @@
 // ============================================================
-// ADMIN — Utilisateurs : liste + création barman (PIN) / admin
+// ADMIN — Utilisateurs : liste + création (barman / admin)
+// 100% COTE CLIENT, sans service_role.
+//
+// Astuce cle : pour creer un compte SANS deconnecter l'admin courant,
+// on instancie un client Supabase SECONDAIRE et ISOLE
+// (persistSession:false) dedie au signUp. La session de l'admin,
+// stockee par le client principal, n'est pas touchee.
+//
+// Le profil (role) est cree par un TRIGGER en base (voir database/
+// functions.sql -> handle_new_user), a partir des metadonnees passees
+// au signUp. Aucune ecriture directe dans "profiles" n'est necessaire.
 // ============================================================
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { createClient as createIsolatedClient } from "@supabase/supabase-js";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -35,19 +46,39 @@ export default function AdminUsersPage() {
     load();
   }, [load]);
 
-  const remove = async (u: Profile) => {
-    if (!confirm(`Supprimer ${u.username} ? Cette action est définitive.`)) return;
-    const res = await fetch("/api/users", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: u.id }),
-    });
-    if (!res.ok) {
-      const { error } = await res.json();
-      toast.error(error ?? "Suppression impossible");
+  // Desactivation (on ne peut pas supprimer un compte Auth sans service_role,
+  // mais on peut le rendre inactif : il ne pourra plus rien faire via la RLS).
+  const deactivate = async (u: Profile) => {
+    if (
+      !confirm(
+        `Desactiver ${u.username} ? Il ne pourra plus se connecter ni agir.`
+      )
+    )
+      return;
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("profiles")
+      .update({ active: false })
+      .eq("id", u.id);
+    if (error) {
+      toast.error(error.message);
       return;
     }
-    toast.success("Utilisateur supprimé");
+    toast.success("Utilisateur desactive");
+    load();
+  };
+
+  const reactivate = async (u: Profile) => {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("profiles")
+      .update({ active: true })
+      .eq("id", u.id);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Utilisateur reactive");
     load();
   };
 
@@ -64,7 +95,7 @@ export default function AdminUsersPage() {
       />
 
       {loading ? (
-        <p className="text-text-muted">Chargement…</p>
+        <p className="text-text-muted">Chargement...</p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {users.map((u) => (
@@ -80,12 +111,22 @@ export default function AdminUsersPage() {
                     {u.username}
                   </span>
                 </div>
-                <button
-                  onClick={() => remove(u)}
-                  className="text-text-muted hover:text-stock-out"
-                >
-                  <Trash2 size={15} />
-                </button>
+                {u.active ? (
+                  <button
+                    onClick={() => deactivate(u)}
+                    title="Desactiver"
+                    className="text-text-muted hover:text-stock-out"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => reactivate(u)}
+                    className="text-xs font-bold text-violet-light hover:underline"
+                  >
+                    Reactiver
+                  </button>
+                )}
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <Badge>{u.role === "admin" ? "Administrateur" : "Barman"}</Badge>
@@ -96,7 +137,7 @@ export default function AdminUsersPage() {
                 )}
               </div>
               <p className="mt-2 text-xs text-text-muted">
-                Créé le {formatDate(u.created_at)}
+                Cree le {formatDate(u.created_at)}
               </p>
             </Card>
           ))}
@@ -104,10 +145,7 @@ export default function AdminUsersPage() {
       )}
 
       {creating && (
-        <CreateUserModal
-          onClose={() => setCreating(false)}
-          onSaved={load}
-        />
+        <CreateUserModal onClose={() => setCreating(false)} onSaved={load} />
       )}
     </div>
   );
@@ -122,31 +160,44 @@ function CreateUserModal({
 }) {
   const [role, setRole] = useState<"barman" | "admin">("barman");
   const [username, setUsername] = useState("");
-  const [pin, setPin] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    setSaving(true);
-    const body =
-      role === "barman"
-        ? { role, username, pin }
-        : { role, username, email, password };
-
-    const res = await fetch("/api/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setSaving(false);
-
-    if (!res.ok) {
-      const { error } = await res.json();
-      toast.error(error ?? "Création impossible");
+    if (!username.trim() || !email.trim() || password.length < 6) {
+      toast.error("Nom, email et mot de passe (6+ caracteres) requis.");
       return;
     }
-    toast.success("Utilisateur créé");
+    setSaving(true);
+
+    // Client ISOLE : ne touche pas la session de l'admin connecte
+    const isolated = createIsolatedClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } }
+    );
+
+    // Le role + le username voyagent dans les metadonnees ; un trigger en base
+    // cree la ligne "profiles" correspondante automatiquement.
+    const { error } = await isolated.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: { username: username.trim(), role },
+      },
+    });
+
+    setSaving(false);
+
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+
+    toast.success(
+      `Compte cree pour ${username}. Il peut se connecter avec son email + mot de passe.`
+    );
     onSaved();
     onClose();
   };
@@ -154,7 +205,7 @@ function CreateUserModal({
   return (
     <Modal open onClose={onClose} title="Nouvel utilisateur" maxWidth="max-w-sm">
       <div className="space-y-4">
-        {/* Choix du rôle */}
+        {/* Choix du role */}
         <div className="flex rounded-lg border border-card-border p-1">
           {(["barman", "admin"] as const).map((r) => (
             <button
@@ -167,62 +218,49 @@ function CreateUserModal({
                   : "text-text-muted hover:text-violet-light"
               )}
             >
-              {r === "barman" ? "🍺 Barman" : "🔧 Admin"}
+              {r === "barman" ? "Barman" : "Admin"}
             </button>
           ))}
         </div>
 
-        <Field label="Nom d'utilisateur">
+        <Field label="Nom d'utilisateur (affiche)">
           <Input
             value={username}
-            onChange={(e) => setUsername(e.target.value.trim())}
-            placeholder={role === "barman" ? "ex : leo" : "ex : theo"}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="ex : Leo"
           />
         </Field>
 
-        {role === "barman" ? (
-          <Field label="Code PIN (4 chiffres)">
-            <Input
-              inputMode="numeric"
-              maxLength={4}
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-              placeholder="0000"
-            />
-          </Field>
-        ) : (
-          <>
-            <Field label="Email">
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@dahu.fr"
-              />
-            </Field>
-            <Field label="Mot de passe (6+ caractères)">
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </Field>
-          </>
-        )}
+        <Field label="Email de connexion">
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="leo@dahu.fr"
+          />
+        </Field>
 
-        {role === "barman" && (
-          <p className="rounded-lg bg-bg p-3 text-xs text-text-muted">
-            Le barman se connectera uniquement avec ce code PIN. Note-le : il
-            n'est pas récupérable ensuite (mais tu peux recréer le compte).
-          </p>
-        )}
+        <Field label="Mot de passe (6+ caracteres)">
+          <Input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </Field>
+
+        <p className="rounded-lg bg-bg p-3 text-xs text-text-muted">
+          {role === "barman"
+            ? "Le barman se connectera avec cet email et ce mot de passe. Il n'aura acces qu'a la caisse."
+            : "L'admin aura acces a tout le back-office."}{" "}
+          Transmets-lui ses identifiants.
+        </p>
 
         <div className="flex gap-3">
           <Button variant="ghost" onClick={onClose} className="flex-1">
             Annuler
           </Button>
           <Button onClick={submit} disabled={saving} className="flex-1">
-            {saving ? "Création…" : "Créer"}
+            {saving ? "Creation..." : "Creer"}
           </Button>
         </div>
       </div>

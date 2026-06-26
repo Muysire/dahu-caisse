@@ -195,3 +195,44 @@ begin
   return v_purchase_id;
 end;
 $$;
+
+-- ------------------------------------------------------------
+-- handle_new_user() — crée automatiquement le profil à l'inscription
+-- Déclenché après chaque création dans auth.users. Lit le username et
+-- le role depuis les métadonnées (raw_user_meta_data) envoyées au signUp.
+-- Permet de créer des comptes 100% côté client, sans clé service_role.
+-- ------------------------------------------------------------
+create or replace function handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_username text;
+  v_role     user_role;
+begin
+  v_username := coalesce(
+    nullif(new.raw_user_meta_data->>'username', ''),
+    split_part(new.email, '@', 1)
+  );
+
+  -- Le rôle vient des métadonnées ; par défaut 'barman'.
+  begin
+    v_role := coalesce((new.raw_user_meta_data->>'role')::user_role, 'barman');
+  exception when others then
+    v_role := 'barman';
+  end;
+
+  insert into profiles (id, username, role, active)
+  values (new.id, v_username, v_role, true)
+  on conflict (id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function handle_new_user();

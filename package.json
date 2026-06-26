@@ -8,13 +8,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "export": "next build"
   },
   "dependencies": {
     "@supabase/ssr": "0.5.2",
     "@supabase/supabase-js": "2.48.1",
     "@tanstack/react-query": "5.66.0",
-    "bcryptjs": "2.4.3",
     "clsx": "2.1.1",
     "lucide-react": "0.474.0",
     "next": "^15.5.19",
@@ -25,7 +25,6 @@
     "zustand": "5.0.3"
   },
   "devDependencies": {
-    "@types/bcryptjs": "2.4.6",
     "@types/node": "22.13.1",
     "@types/react": "19.0.8",
     "@types/react-dom": "19.0.3",

@@ -20,14 +20,14 @@ exception when duplicate_object then null; end $$;
 
 -- ------------------------------------------------------------
 -- PROFILES — utilisateurs de l'app (liés à auth.users de Supabase)
--- L'admin se connecte par email+mot de passe (auth Supabase).
--- Le barman se connecte par PIN à 4 chiffres (pin_hash vérifié côté serveur).
+-- Admins ET barmen se connectent par email + mot de passe.
+-- Le profil est créé automatiquement à l'inscription (trigger
+-- handle_new_user, voir functions.sql) à partir des métadonnées.
 -- ------------------------------------------------------------
 create table if not exists profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   username    text not null unique,
   role        user_role not null default 'barman',
-  pin_hash    text,                       -- hash bcrypt du PIN (barman). null pour admin.
   active      boolean not null default true,
   created_at  timestamptz not null default now()
 );

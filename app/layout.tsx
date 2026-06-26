@@ -28,8 +28,9 @@ const ubuntuMono = Ubuntu_Mono({
 export const metadata: Metadata = {
   title: "Dahu Caisse",
   description: "Caisse & gestion de stock — Dahu Sound System",
-  manifest: "/manifest.json",
-  icons: { icon: "/images/logo-dahu-white.png" },
+  // Chemins relatifs : fonctionnent même sous le sous-dossier GitHub Pages
+  manifest: "./manifest.json",
+  icons: { icon: "./images/logo-dahu-white.png" },
 };
 
 export const viewport: Viewport = {
