@@ -1,260 +1,224 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Dahu Caisse — Gestion de stock</title>
-  <meta name="description" content="Caisse et gestion de stock — Dahu Sound System">
-  <meta name="theme-color" content="#7c3aed">
+/* ============================================================
+   page-caisse.js — Caisse tactile (POS)
+   Aucun paiement ici : le barman valide, l'encaissement se fait
+   sur le TPE. La validation décrémente le stock.
+   ============================================================ */
 
-  <!-- ========== FEUILLES DE STYLE ========== -->
-  <link rel="stylesheet" href="css/01-base.css">
-  <link rel="stylesheet" href="css/02-components.css">
-  <link rel="stylesheet" href="css/03-layout-public.css">
-  <link rel="stylesheet" href="css/04-layout-admin.css">
+let CAISSE = { products:[], activeCat:"all", cart:[], submitting:false, drawerOpen:false };
 
-  <!-- Style de l'ecran de diagnostic. Ecrit ICI volontairement :
-       il fonctionne meme si le dossier css/ est absent. -->
-  <style>
-    #dahu-diag{display:none;position:fixed;inset:0;z-index:9999;overflow-y:auto;
-      background:#0a0710;color:#f2eefb;padding:32px 20px;
-      font-family:system-ui,-apple-system,'Segoe UI',sans-serif;line-height:1.55}
-    #dahu-diag .box{max-width:680px;margin:0 auto}
-    #dahu-diag h1{font-size:26px;color:#a78bfa;margin:0 0 6px}
-    #dahu-diag h2{font-size:17px;color:#a78bfa;margin:26px 0 10px}
-    #dahu-diag p{margin:0 0 12px;color:#c9c0dc}
-    #dahu-diag code,#dahu-diag .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
-    #dahu-diag .card{background:#120d1c;border:1px solid #241a38;border-radius:12px;padding:16px;margin-bottom:14px}
-    #dahu-diag .bad{color:#ef4444}
-    #dahu-diag .good{color:#22c55e}
-    #dahu-diag ul{margin:8px 0 0;padding-left:20px}
-    #dahu-diag li{margin-bottom:4px}
-    #dahu-diag .fix{background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.4);border-radius:12px;padding:16px}
-    #dahu-diag .tag{display:inline-block;background:#4c1d95;color:#fff;font-size:11px;font-weight:700;
-      letter-spacing:1px;text-transform:uppercase;padding:3px 9px;border-radius:6px;margin-bottom:10px}
-    #dahu-diag .btn{display:inline-block;margin-top:14px;background:#7c3aed;color:#fff;border:none;
-      padding:10px 18px;border-radius:10px;font-weight:700;cursor:pointer;font-size:14px}
-  </style>
-</head>
-<body>
+async function renderCaisse(){
+  CAISSE.products = await Products.listActive();
+  paintCaisse();
+}
 
-  <!-- Toute l'application se dessine ici -->
-  <div id="app">
-    <div class="center-screen">
-      <div class="spinner"></div>
-      <p class="muted fm">Chargement…</p>
+/* ---------- Sélecteurs ---------- */
+function caisseCats(){
+  const m = new Map();
+  for(const p of CAISSE.products){
+    if(p.category) m.set(p.category.slug, { slug:p.category.slug, name:p.category.name, icon:p.category.icon||"✨" });
+  }
+  return [...m.values()];
+}
+function caisseFiltered(){
+  return CAISSE.activeCat === "all"
+    ? CAISSE.products
+    : CAISSE.products.filter(p => p.category?.slug === CAISSE.activeCat);
+}
+const cartTotal = () => CAISSE.cart.reduce((s,l)=>s+l.salePrice*l.qty, 0);
+const cartCount = () => CAISSE.cart.reduce((s,l)=>s+l.qty, 0);
+
+/* ---------- Actions panier ---------- */
+function addVariant(v, productName){
+  const line = CAISSE.cart.find(x=>x.variantId === v.id);
+  if(line){ if(line.qty < v.stock) line.qty++; }
+  else{
+    if(v.stock <= 0) return;
+    CAISSE.cart.push({ variantId:v.id, productName:`${productName} — ${v.label}`,
+      salePrice:v.sale_price, qty:1, stock:v.stock });
+  }
+  paintCaisse();
+}
+function setQty(variantId, qty){
+  const line = CAISSE.cart.find(x=>x.variantId === variantId);
+  if(!line) return;
+  if(qty <= 0) CAISSE.cart = CAISSE.cart.filter(x=>x.variantId !== variantId);
+  else line.qty = Math.min(qty, line.stock);
+  paintCaisse();
+}
+function tapProduct(p){
+  if(p.variants.length === 1) addVariant(p.variants[0], p.name);
+  else openVariantPicker(p);
+}
+
+function openVariantPicker(p){
+  const box = document.createElement("div");
+  box.innerHTML = `<p class="muted" style="margin-bottom:12px">Choisis le format :</p>` +
+    p.variants.map(v=>{
+      const out = v.stock <= 0;
+      const st  = stockStatus(v.stock, v.min_stock);
+      return `<button class="card" ${out?"disabled":""} data-vid="${v.id}"
+        style="display:flex;width:100%;align-items:center;justify-content:space-between;padding:16px;
+               margin-bottom:10px;cursor:${out?"not-allowed":"pointer"};opacity:${out?.4:1};text-align:left">
+        <div>
+          <div class="fd" style="font-size:20px">${esc(v.label)}</div>
+          <div style="font-size:12px">${out
+            ? '<span style="color:var(--out)">Épuisé</span>'
+            : `<span style="color:${st==="low"?"var(--low)":"var(--ok)"}">${v.stock} en stock</span>`}</div>
+        </div>
+        <span class="fm violet-text" style="font-size:20px;font-weight:700">${euro(v.sale_price)}</span>
+      </button>`;
+    }).join("") +
+    `<div class="modal-foot" data-modal-actions><button class="btn secondary" data-close-modal>Fermer</button></div>`;
+
+  box.querySelectorAll("button[data-vid]").forEach(b=>{
+    if(b.disabled) return;
+    b.onclick = () => { addVariant(p.variants.find(x=>x.id===b.dataset.vid), p.name); closeModal(); };
+  });
+
+  const ov = openModal({ title:p.name, body:box, showFooterClose:false });
+  bindCloseButtons(ov);
+}
+
+async function validateSale(){
+  if(!CAISSE.cart.length || CAISSE.submitting) return;
+  CAISSE.submitting = true; paintCaisse();
+  try{
+    const res = await Sales.create(CAISSE.cart);
+    toast(`Vente enregistrée · ${euro(res.total)} · ${res.item_count} article(s)`);
+    CAISSE.cart = []; CAISSE.drawerOpen = false;
+    CAISSE.products = await Products.listActive();   // rafraîchit les stocks
+  }catch(e){
+    toast(e.message, "error");
+  }finally{
+    CAISSE.submitting = false; paintCaisse();
+  }
+}
+
+/* ---------- Rendu du panier ---------- */
+function cartHTML(){
+  if(!CAISSE.cart.length){
+    return `<div class="cart-empty">${icon("cart",40)}<p style="margin-top:10px">Tape un produit pour l'ajouter</p></div>`;
+  }
+  const lines = CAISSE.cart.map(l=>`
+    <div class="cart-line">
+      <div class="row between gap-2" style="align-items:flex-start">
+        <div style="min-width:0;flex:1">
+          <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(l.productName)}</div>
+          <div class="fm muted" style="font-size:12px">${euro(l.salePrice)} × ${l.qty} = <span class="violet-text">${euro(l.salePrice*l.qty)}</span></div>
+        </div>
+        <button class="qty-btn" style="width:30px;height:30px;border:none;background:none;color:var(--text-muted)" data-rm="${l.variantId}">${icon("trash",15)}</button>
+      </div>
+      <div class="row gap-2" style="margin-top:8px">
+        <button class="qty-btn" data-dec="${l.variantId}">${icon("minus",16)}</button>
+        <span class="fm" style="width:32px;text-align:center;font-size:18px;font-weight:700">${l.qty}</span>
+        <button class="qty-btn" data-inc="${l.variantId}" ${l.qty>=l.stock?"disabled":""}>${icon("plus",16)}</button>
+        ${l.qty>=l.stock ? '<span class="muted" style="font-size:10px;text-transform:uppercase;color:var(--low)">max</span>' : ""}
+      </div>
+    </div>`).join("");
+
+  const prep = CAISSE.cart.map(l=>`
+    <div class="row between">
+      <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(l.productName)}</span>
+      <span class="violet-text" style="margin-left:8px;flex-shrink:0">×${l.qty}</span>
+    </div>`).join("");
+
+  return `
+    <div class="cart-head">
+      <div class="row gap-2">${icon("cart",20)}<span class="fd" style="font-size:20px">Panier</span>
+        ${cartCount() ? `<span class="pill" style="border-radius:999px;padding:2px 8px">${cartCount()}</span>` : ""}
+      </div>
+      <button class="btn ghost sm" data-clear>Vider</button>
     </div>
-  </div>
+    <div class="cart-lines">${lines}</div>
+    <div class="cart-foot">
+      <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:4px">À préparer</div>
+        <div class="fm" style="font-size:14px;display:flex;flex-direction:column;gap:2px">${prep}</div>
+      </div>
+      <div class="row between" style="align-items:flex-end;margin-bottom:12px">
+        <span class="muted" style="text-transform:uppercase;font-size:14px">Total</span>
+        <span class="fm violet-text" style="font-size:30px;font-weight:700">${euro(cartTotal())}</span>
+      </div>
+      <button class="btn xl" data-validate ${CAISSE.submitting?"disabled":""}>${CAISSE.submitting?"Enregistrement…":"✓ Valider"}</button>
+      <p class="center muted" style="margin-top:8px;font-size:11px">Paiement à encaisser sur le TPE</p>
+    </div>`;
+}
 
-  <!-- Ecran de diagnostic : masque tant que tout va bien -->
-  <div id="dahu-diag"><div class="box"></div></div>
+function bindCart(scope){
+  scope.querySelectorAll("[data-inc]").forEach(b=>b.onclick = ()=>{
+    const l = CAISSE.cart.find(x=>x.variantId===b.dataset.inc); setQty(b.dataset.inc, l.qty+1);
+  });
+  scope.querySelectorAll("[data-dec]").forEach(b=>b.onclick = ()=>{
+    const l = CAISSE.cart.find(x=>x.variantId===b.dataset.dec); setQty(b.dataset.dec, l.qty-1);
+  });
+  scope.querySelectorAll("[data-rm]").forEach(b=>b.onclick = ()=>setQty(b.dataset.rm, 0));
+  const clear = scope.querySelector("[data-clear]");
+  if(clear) clear.onclick = ()=>{ CAISSE.cart = []; paintCaisse(); };
+  const validate = scope.querySelector("[data-validate]");
+  if(validate) validate.onclick = validateSale;
+}
 
+/* ---------- Rendu global ---------- */
+function paintCaisse(){
+  const catTabs = `<div class="cat-tabs">
+    <button class="cat-tab ${CAISSE.activeCat==="all"?"active":""}" data-cat="all">🔊 Tout</button>
+    ${caisseCats().map(c=>`<button class="cat-tab ${CAISSE.activeCat===c.slug?"active":""}" data-cat="${c.slug}"><span>${c.icon}</span>${esc(c.name)}</button>`).join("")}
+  </div>`;
 
-  <!-- ============================================================
-       SURVEILLANCE — doit etre le TOUT PREMIER script.
-       Role : si un fichier manque ou plante, afficher un message
-       clair au lieu de laisser tourner le spinner indefiniment.
-       ============================================================ -->
-  <script>
-    window.__DAHU = { failed: [], booted: false, fatal: null };
+  const products = caisseFiltered();
+  const grid = products.length ? `<div class="products-grid">${products.map(p=>{
+    const totalStock = p.variants.reduce((s,v)=>s+v.stock, 0);
+    const out = totalStock <= 0;
+    const minPrice = Math.min(...p.variants.map(v=>v.sale_price));
+    const multi = p.variants.length > 1;
+    const anyOk = p.variants.some(v=>stockStatus(v.stock,v.min_stock) === "ok");
+    const st = out ? "out" : anyOk ? "ok" : "low";
+    const dot = st==="ok" ? "var(--ok)" : st==="low" ? "var(--low)" : "var(--out)";
+    /* Photo de la 1re variante qui en a une, sinon emoji catégorie */
+    const photo = p.variants.find(v=>v.photo_url)?.photo_url || null;
+    const vis = productVisual(photo, p.category?.icon || "✨");
+    return `<button class="pcard ${out?"out":""}" data-pid="${p.id}" ${out?"disabled":""}>
+      <div class="img ${vis.cls}" style="${vis.style}">${vis.content}
+        <span class="dot" style="background:${dot}"></span>
+        ${out ? '<span class="out-tag"><span>Épuisé</span></span>' : ""}
+      </div>
+      <div class="body">
+        <div class="name">${esc(p.name)}</div>
+        <div class="price">${multi ? '<span class="muted" style="font-size:12px;font-weight:400">dès </span>' : ""}${euro(minPrice)}</div>
+      </div>
+    </button>`;
+  }).join("")}</div>` : `<p class="center muted" style="padding:40px">Aucun produit dans cette catégorie.</p>`;
 
-    /* Appele par l'attribut onerror de chaque <script> introuvable */
-    function __fail(src){ window.__DAHU.failed.push(src); }
+  App.root.innerHTML = `<div class="caisse-layout">
+    <div><div class="banner"></div>${demoNote()}
+      <div class="rush-bar">${logoHTML()}
+        <div class="row gap-3">
+          ${App.profile?.role === "admin" ? `<a href="#admin" class="btn secondary sm">Admin</a>` : ""}
+          <span class="muted" style="font-size:14px">${esc(App.profile?.username||"")} <span class="pill">${esc(App.profile?.role||"")}</span></span>
+          <button class="btn ghost sm" onclick="doSignOut()">${icon("logout",16)}<span>Sortir</span></button>
+        </div>
+      </div>
+    </div>
+    <div class="caisse-main">
+      <div class="caisse-products">${catTabs}<div class="products-scroll">${grid}</div></div>
+      <aside class="cart desktop">${cartHTML()}</aside>
+    </div>
+    ${cartCount() ? `<button class="cart-bar">
+      <span class="row gap-2" style="font-weight:700">${icon("cart",20)} ${cartCount()} article(s)</span>
+      <span class="fm" style="font-size:20px;font-weight:700">${euro(cartTotal())}</span>
+    </button>` : ""}
+    ${CAISSE.drawerOpen ? `<div class="cart-drawer"><div class="scrim"></div><div class="panel">${cartHTML()}</div></div>` : ""}
+  </div>`;
 
-    /* Erreurs JS non rattrapees */
-    window.addEventListener("error", function(e){
-      if(e.message && !window.__DAHU.fatal) window.__DAHU.fatal = e.message;
-    });
-    window.addEventListener("unhandledrejection", function(e){
-      if(!window.__DAHU.fatal) window.__DAHU.fatal = (e.reason && e.reason.message) || String(e.reason);
-    });
-
-    /* Le CSS est-il arrive ? (on lit une variable definie dans 01-base.css) */
-    function __cssLoaded(){
-      var v = getComputedStyle(document.documentElement).getPropertyValue("--violet");
-      return !!(v && v.trim() !== "");
-    }
-
-    /* Chaque script a-t-il bien defini ce qu'on attend de lui ? */
-    var __EXPECT = [
-      ["js/core/config.js",          function(){ return typeof DAHU_CONFIG !== "undefined"; }],
-      ["js/core/utils.js",           function(){ return typeof esc === "function"; }],
-      ["js/core/ui.js",              function(){ return typeof openModal === "function"; }],
-      ["js/core/demo-data.js",       function(){ return typeof DemoDB !== "undefined"; }],
-      ["js/core/csv.js",             function(){ return typeof importStockCsv === "function"; }],
-      ["js/core/data-auth.js",       function(){ return typeof Auth !== "undefined"; }],
-      ["js/core/data-catalog.js",    function(){ return typeof Products !== "undefined"; }],
-      ["js/pages/page-login.js",     function(){ return typeof renderLogin === "function"; }],
-      ["js/pages/page-menu.js",      function(){ return typeof renderMenu === "function"; }],
-      ["js/pages/page-caisse.js",    function(){ return typeof renderCaisse === "function"; }],
-      ["js/admin/admin-shell.js",    function(){ return typeof renderAdmin === "function"; }],
-      ["js/admin/admin-dashboard.js",function(){ return typeof adminDashboard === "function"; }],
-      ["js/admin/admin-products.js", function(){ return typeof adminProducts === "function"; }],
-      ["js/admin/admin-stock.js",    function(){ return typeof adminStock === "function"; }],
-      ["js/admin/admin-reports.js",  function(){ return typeof adminStats === "function"; }],
-      ["js/admin/admin-exports.js",  function(){ return typeof adminExports === "function"; }],
-      ["js/admin/admin-users.js",    function(){ return typeof adminUsers === "function"; }],
-      ["js/router.js",               function(){ return typeof boot === "function"; }]
-    ];
-
-    function __missingScripts(){
-      var missing = [];
-      for(var i=0; i<__EXPECT.length; i++){
-        var ok = false;
-        try { ok = __EXPECT[i][1](); } catch(e){ ok = false; }
-        if(!ok) missing.push(__EXPECT[i][0]);
-      }
-      return missing;
-    }
-
-    /* Affiche l'ecran de diagnostic */
-    function __showDiag(){
-      var missing = __missingScripts();
-      var cssOk   = __cssLoaded();
-      var isFile  = location.protocol === "file:";
-      var fatal   = window.__DAHU.fatal;
-
-      var html = '<span class="tag">Dahu Caisse — Diagnostic</span>' +
-        '<h1>Le site n\'a pas pu demarrer</h1>' +
-        '<p>Voici precisement ce qui manque. C\'est reparable en quelques clics.</p>';
-
-      /* Cas 1 : des fichiers ne sont pas arrives */
-      if(missing.length || !cssOk){
-        html += '<h2>❌ Fichiers introuvables</h2><div class="card">';
-        if(!cssOk) html += '<p class="bad">• Le dossier <code>css/</code> n\'a pas ete trouve.</p>';
-        if(missing.length){
-          html += '<p class="bad">• ' + missing.length + ' fichier(s) JavaScript manquant(s) :</p><ul class="mono">';
-          for(var i=0;i<missing.length;i++) html += '<li class="bad">' + missing[i] + '</li>';
-          html += '</ul>';
-        }
-        html += '</div><h2>✅ Comment reparer</h2><div class="fix">';
-        if(isFile){
-          html += '<p><strong>Tu as ouvert le fichier en double-clic.</strong></p>' +
-            '<p><code>index.html</code> doit rester <strong>a cote</strong> des dossiers ' +
-            '<code>css/</code> et <code>js/</code>, dans le meme dossier.</p>' +
-            '<p>Ne deplace pas <code>index.html</code> tout seul : ouvre-le depuis le dossier ' +
-            '<code>dahu-caisse/</code> complet.</p>';
-        }else{
-          html += '<p><strong>Tu es sur GitHub Pages.</strong> Tu n\'as probablement uploade que ' +
-            '<code>index.html</code>, sans les dossiers.</p>' +
-            '<p>Sur ton depot GitHub, tu dois voir <strong>3 elements</strong> a la racine :</p>' +
-            '<ul class="mono"><li>index.html</li><li>css/</li><li>js/</li></ul>' +
-            '<p style="margin-top:12px">S\'il en manque : <strong>Add file → Upload files</strong>, ' +
-            'puis glisse les dossiers <code>css</code> et <code>js</code> <em>entiers</em> ' +
-            '(pas fichier par fichier), et clique <strong>Commit changes</strong>.</p>' +
-            '<p>Attends 1 minute, puis recharge avec <strong>Ctrl+Maj+R</strong>.</p>';
-        }
-        html += '</div>';
-      }
-      /* Cas 2 : tout est la, mais le JS a plante */
-      else if(fatal){
-        html += '<h2>⚠️ Erreur au demarrage</h2><div class="card"><p class="bad mono">' +
-          String(fatal).replace(/</g,"&lt;") + '</p></div>' +
-          '<h2>✅ Piste la plus probable</h2><div class="fix">' +
-          '<p>Verifie <code>js/core/config.js</code> : <code>SUPABASE_URL</code> et ' +
-          '<code>SUPABASE_ANON_KEY</code> doivent etre soit <strong>toutes les deux vides</strong> ' +
-          '(mode demo), soit <strong>toutes les deux remplies</strong> et correctes.</p>' +
-          '<p>Une virgule ou un guillemet en trop suffit a tout bloquer.</p></div>';
-      }
-      /* Cas 3 : rien n'a demarre sans raison identifiee */
-      else{
-        html += '<h2>⚠️ Demarrage trop long</h2><div class="card">' +
-          '<p>Les fichiers sont presents mais l\'application n\'a pas repondu.</p></div>' +
-          '<h2>✅ A essayer</h2><div class="fix">' +
-          '<p>1. Recharge la page avec <strong>Ctrl+Maj+R</strong> (vide le cache).</p>' +
-          '<p>2. Si tu as rempli <code>js/core/config.js</code>, verifie ta connexion Internet : ' +
-          'le site doit joindre Supabase.</p>' +
-          '<p>3. Ouvre la console (<strong>F12</strong>) pour lire le message d\'erreur.</p></div>';
-      }
-
-      html += '<h2>Informations techniques</h2>' +
-        '<div class="card mono" style="font-size:12px;color:#9a8fb0">' +
-        '<div>Adresse : ' + location.href.replace(/</g,"&lt;") + '</div>' +
-        '<div>Protocole : ' + location.protocol + '</div>' +
-        '<div>CSS charge : ' + (cssOk ? '<span class="good">oui</span>' : '<span class="bad">non</span>') + '</div>' +
-        '<div>Scripts manquants : ' + missing.length + '</div>' +
-        '<div>Fichiers en erreur reseau : ' + window.__DAHU.failed.length + '</div></div>' +
-        '<button class="btn" onclick="location.reload()">Recharger la page</button>';
-
-      var diag = document.getElementById("dahu-diag");
-      diag.querySelector(".box").innerHTML = html;
-      diag.style.display = "block";
-      var app = document.getElementById("app");
-      if(app) app.style.display = "none";
-    }
-
-    /* Appele par router.js quand l'application a reellement demarre */
-    function __booted(){ window.__DAHU.booted = true; }
-
-    /* Erreur fatale signalee par router.js */
-    function __fatal(msg){ window.__DAHU.fatal = msg; __showDiag(); }
-
-    /* ------------------------------------------------------------
-       Verification d'INTEGRITE, appelee par router.js AVANT de demarrer.
-       Retourne true si tout est present. Sinon affiche le diagnostic
-       et retourne false : l'application ne demarre pas sur une base
-       incomplete (sinon on aurait un site sans style, ou une page
-       admin qui plante au premier clic).
-       ------------------------------------------------------------ */
-    function __checkIntegrity(){
-      var missing = __missingScripts();
-      var cssOk   = __cssLoaded();
-      if(missing.length || !cssOk){ __showDiag(); return false; }
-      return true;
-    }
-
-    window.addEventListener("load", function(){
-      /* Controle rapide : si router.js lui-meme est absent, boot() ne sera
-         JAMAIS appele et __checkIntegrity() non plus. On verifie donc ici. */
-      setTimeout(function(){
-        if(window.__DAHU.booted) return;
-        if(__missingScripts().length || !__cssLoaded()) __showDiag();
-      }, 500);
-
-      /* Filet de securite : rien n'a demarre au bout de 10 s
-         (ex. Supabase injoignable et router.js sans garde-fou) */
-      setTimeout(function(){
-        if(!window.__DAHU.booted) __showDiag();
-      }, 10000);
-    });
-  </script>
-
-
-  <!-- ============================================================
-       SCRIPTS DE L'APPLICATION
-       Ordre impose : config -> utils -> ui -> donnees -> pages -> routeur.
-       Ce sont des <script> classiques (pas de modules ES6) : c'est ce
-       qui permet d'ouvrir le site en double-clic (protocole file://).
-       L'attribut onerror signale un fichier introuvable.
-       ============================================================ -->
-
-  <!-- 1. Noyau -->
-  <script src="js/core/config.js"       onerror="__fail(this.src)"></script>  <!-- LE SEUL FICHIER A MODIFIER -->
-  <script src="js/core/utils.js"        onerror="__fail(this.src)"></script>
-  <script src="js/core/ui.js"           onerror="__fail(this.src)"></script>
-  <script src="js/core/demo-data.js"    onerror="__fail(this.src)"></script>
-  <script src="js/core/csv.js"          onerror="__fail(this.src)"></script>
-
-  <!-- 2. Couche donnees -->
-  <script src="js/core/data-auth.js"    onerror="__fail(this.src)"></script>
-  <script src="js/core/data-catalog.js" onerror="__fail(this.src)"></script>
-
-  <!-- 3. Pages publiques -->
-  <script src="js/pages/page-login.js"  onerror="__fail(this.src)"></script>
-  <script src="js/pages/page-menu.js"   onerror="__fail(this.src)"></script>
-  <script src="js/pages/page-caisse.js" onerror="__fail(this.src)"></script>
-
-  <!-- 4. Back-office -->
-  <script src="js/admin/admin-shell.js"     onerror="__fail(this.src)"></script>
-  <script src="js/admin/admin-dashboard.js" onerror="__fail(this.src)"></script>
-  <script src="js/admin/admin-products.js"  onerror="__fail(this.src)"></script>
-  <script src="js/admin/admin-stock.js"     onerror="__fail(this.src)"></script>
-  <script src="js/admin/admin-reports.js"   onerror="__fail(this.src)"></script>
-  <script src="js/admin/admin-exports.js"   onerror="__fail(this.src)"></script>
-  <script src="js/admin/admin-users.js"     onerror="__fail(this.src)"></script>
-
-  <!-- 5. Routeur (demarre l'application) -->
-  <script src="js/router.js"            onerror="__fail(this.src)"></script>
-
-</body>
-</html>
+  App.root.querySelectorAll("[data-cat]").forEach(b=>b.onclick = ()=>{ CAISSE.activeCat = b.dataset.cat; paintCaisse(); });
+  App.root.querySelectorAll("[data-pid]").forEach(b=>{
+    if(!b.disabled) b.onclick = ()=>tapProduct(CAISSE.products.find(p=>p.id===b.dataset.pid));
+  });
+  const bar = App.root.querySelector(".cart-bar");
+  if(bar) bar.onclick = ()=>{ CAISSE.drawerOpen = true; paintCaisse(); };
+  const scrim = App.root.querySelector(".cart-drawer .scrim");
+  if(scrim) scrim.onclick = ()=>{ CAISSE.drawerOpen = false; paintCaisse(); };
+  App.root.querySelectorAll(".cart").forEach(c=>bindCart(c));
+  const panel = App.root.querySelector(".cart-drawer .panel");
+  if(panel) bindCart(panel);
+}

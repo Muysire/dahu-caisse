@@ -1,137 +1,175 @@
 /* ============================================================
-   ui.js — Toasts, modales, aide au formulaire
+   csv.js — Export ET import CSV (maintenance via Excel)
    ============================================================ */
 
-/* ---------- Toasts ---------- */
-function ensureToaster(){
-  let t = document.getElementById("toaster");
-  if(!t){ t = document.createElement("div"); t.id = "toaster"; document.body.appendChild(t); }
-  return t;
+/* ---------------- EXPORT ---------------- */
+function csvCell(v){
+  const s = v == null ? "" : String(v);
+  return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
 }
-function toast(msg, type="success"){
-  const t = ensureToaster();
-  const el = document.createElement("div");
-  el.className = "toast " + type;
-  el.innerHTML = `<span>${type==="success"?"✓":"⚠"}</span><span>${esc(msg)}</span>`;
-  t.appendChild(el);
-  setTimeout(()=>{
-    el.style.opacity="0"; el.style.transition="opacity .3s";
-    setTimeout(()=>el.remove(),300);
-  },3200);
+function toCsv(rows){
+  if(!rows.length) return "";
+  const headers = Object.keys(rows[0]);
+  // \uFEFF = BOM : force Excel à lire l'UTF-8 (accents corrects)
+  return "\uFEFF" + [headers.join(";"), ...rows.map(r=>headers.map(h=>csvCell(r[h])).join(";"))].join("\r\n");
+}
+function downloadCsv(filename, csv){
+  const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
-/* ============================================================
-   MODALES
-   ------------------------------------------------------------
-   PROBLÈME RÉSOLU ICI :
-   Avant, un clic sur le fond fermait la modale. Or l'évènement
-   "click" se déclenche au RELÂCHEMENT de la souris. Si on
-   commençait une sélection de texte DANS la modale et qu'on
-   relâchait HORS de la modale, elle se fermait toute seule.
+/* ---------------- IMPORT ---------------- */
 
-   SOLUTION :
-   1) On mémorise où le clic a COMMENCÉ (mousedown).
-   2) On ne ferme que si le clic a commencé ET fini sur le fond.
-   3) Un bouton "Fermer" explicite est toujours présent (croix
-      en haut + bouton en bas de formulaire).
-   ============================================================ */
-let _mouseDownTarget = null;
+/* Parseur CSV robuste : gère les guillemets, ; ou , et le BOM */
+function parseCsv(text){
+  text = text.replace(/^\uFEFF/, "");                 // retire le BOM
+  const firstLine = text.split(/\r?\n/)[0] || "";
+  const sep = (firstLine.match(/;/g)||[]).length >= (firstLine.match(/,/g)||[]).length ? ";" : ",";
 
-function openModal({title, body, wide, showFooterClose = true}){
-  closeModal();
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
 
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  overlay.id = "active-modal";
-  overlay.innerHTML = `
-    <div class="modal ${wide?"lg":""}">
-      <div class="modal-head">
-        <h2>${esc(title)}</h2>
-        <button class="x-btn" data-close-modal title="Fermer (Échap)" aria-label="Fermer">×</button>
-      </div>
-      <div class="modal-body"></div>
-    </div>`;
+  for(let i=0; i<text.length; i++){
+    const c = text[i], next = text[i+1];
+    if(inQuotes){
+      if(c === '"' && next === '"'){ field += '"'; i++; }
+      else if(c === '"'){ inQuotes = false; }
+      else field += c;
+    }else{
+      if(c === '"') inQuotes = true;
+      else if(c === sep){ row.push(field); field = ""; }
+      else if(c === "\n"){ row.push(field); rows.push(row); row = []; field = ""; }
+      else if(c === "\r"){ /* ignoré */ }
+      else field += c;
+    }
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
 
-  const bodyEl = overlay.querySelector(".modal-body");
-  bodyEl.appendChild(body);
+  const clean = rows.filter(r => r.some(c => String(c).trim() !== ""));
+  if(!clean.length) return { headers:[], rows:[] };
 
-  // Bouton "Fermer" explicite en bas, si le contenu n'a pas déjà ses propres actions
-  if(showFooterClose && !body.querySelector("[data-modal-actions]")){
-    const foot = document.createElement("div");
-    foot.className = "modal-foot";
-    foot.innerHTML = `<button class="btn secondary" data-close-modal>Fermer</button>`;
-    bodyEl.appendChild(foot);
+  const headers = clean[0].map(h=>h.trim());
+  const objects = clean.slice(1).map(r=>{
+    const o = {};
+    headers.forEach((h,i)=> o[h] = (r[i] ?? "").trim());
+    return o;
+  });
+  return { headers, rows:objects };
+}
+
+/* Nombre tolérant : accepte "2,50" comme "2.50" */
+function parseNum(v){
+  if(v === "" || v == null) return null;
+  const n = Number(String(v).replace(",", ".").replace(/\s/g,""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/* Trouve une colonne quel que soit son intitulé exact */
+function pick(row, names){
+  for(const n of names){
+    for(const key of Object.keys(row)){
+      if(key.toLowerCase() === n.toLowerCase()) return row[key];
+    }
+  }
+  return "";
+}
+
+/* ------------------------------------------------------------
+   Import du stock.
+   Le fichier attendu est celui produit par l'export "stock" :
+     Produit ; Variante ; Code ; Stock ; Seuil ; Prix vente ; Prix achat
+   Identification d'une ligne :
+     1) par "Code" (le plus fiable)
+     2) sinon par le couple "Produit" + "Variante"
+   Colonnes vides = champ non modifié.
+   ------------------------------------------------------------ */
+async function importStockCsv(text, { dryRun = false } = {}){
+  const { rows } = parseCsv(text);
+  if(!rows.length) throw new Error("Fichier vide ou illisible.");
+
+  const products = await Products.listAll();
+
+  /* Index de recherche */
+  const byCode = new Map(), byName = new Map();
+  for(const p of products){
+    for(const v of p.variants){
+      if(v.code) byCode.set(String(v.code).trim().toLowerCase(), { p, v });
+      byName.set((p.name+"||"+v.label).toLowerCase(), { p, v });
+    }
   }
 
-  // 1) Mémorise l'origine du clic
-  overlay.addEventListener("mousedown", e => { _mouseDownTarget = e.target; });
+  const report = { updated:[], skipped:[], errors:[] };
 
-  // 2) Ne ferme QUE si le clic a commencé ET s'est terminé sur le fond
-  overlay.addEventListener("mouseup", e => {
-    if(e.target === overlay && _mouseDownTarget === overlay) closeModal();
-    _mouseDownTarget = null;
-  });
+  for(let i=0; i<rows.length; i++){
+    const r = rows[i];
+    const lineNo = i + 2; // +1 en-tête, +1 index humain
 
-  // 3) Tous les boutons marqués [data-close-modal] ferment la modale
-  overlay.querySelectorAll("[data-close-modal]").forEach(b => b.onclick = closeModal);
+    const code    = pick(r, ["Code","code","SKU"]).trim();
+    const pName   = pick(r, ["Produit","produit","Product","Nom"]).trim();
+    const vLabel  = pick(r, ["Variante","variante","Variant","Format"]).trim();
 
-  document.body.appendChild(overlay);
-  return overlay;
-}
+    let match = null;
+    if(code) match = byCode.get(code.toLowerCase());
+    if(!match && pName && vLabel) match = byName.get((pName+"||"+vLabel).toLowerCase());
 
-function closeModal(){
-  const m = document.getElementById("active-modal");
-  if(m) m.remove();
-  _mouseDownTarget = null;
-}
+    if(!match){
+      report.errors.push(`Ligne ${lineNo} : produit introuvable (${code || pName+" / "+vLabel || "ligne vide"})`);
+      continue;
+    }
 
-/* Échap ferme toujours */
-document.addEventListener("keydown", e => { if(e.key === "Escape") closeModal(); });
+    const stock = parseNum(pick(r, ["Stock","stock","Quantité","Quantite","Qty"]));
+    const min   = parseNum(pick(r, ["Seuil","seuil","Stock min","Min","Min stock"]));
+    const pv    = parseNum(pick(r, ["Prix vente","prix vente","PV","Prix de vente"]));
+    const pa    = parseNum(pick(r, ["Prix achat","prix achat","PA","Prix d'achat"]));
 
-/* Câble les boutons de fermeture ajoutés après coup (formulaires) */
-function bindCloseButtons(scope){
-  scope.querySelectorAll("[data-close-modal]").forEach(b => b.onclick = closeModal);
-}
+    const fields = {};
+    if(stock !== null) fields.stock = Math.round(stock);
+    if(min   !== null) fields.min_stock = Math.round(min);
+    if(pv    !== null) fields.sale_price = pv;
+    if(pa    !== null) fields.purchase_price = pa;
 
-/* ---------- Confirmation stylée (remplace confirm()) ---------- */
-function confirmDialog({title, message, confirmLabel="Confirmer", danger=false}){
-  return new Promise(resolve=>{
-    const box = document.createElement("div");
-    box.innerHTML = `
-      <p style="font-size:15px;line-height:1.5">${esc(message)}</p>
-      <div class="modal-foot" data-modal-actions style="margin-top:20px">
-        <button class="btn secondary" data-cancel>Annuler</button>
-        <button class="btn ${danger?"danger":""}" data-ok>${esc(confirmLabel)}</button>
-      </div>`;
-    box.querySelector("[data-cancel]").onclick = ()=>{ closeModal(); resolve(false); };
-    box.querySelector("[data-ok]").onclick   = ()=>{ closeModal(); resolve(true);  };
-    const ov = openModal({title, body:box, showFooterClose:false});
-    // La croix "×" vaut annulation
-    ov.querySelector(".x-btn").onclick = ()=>{ closeModal(); resolve(false); };
-  });
-}
+    if(!Object.keys(fields).length){
+      report.skipped.push(`Ligne ${lineNo} : ${match.p.name} — ${match.v.label} (rien à modifier)`);
+      continue;
+    }
+    if(fields.stock !== undefined && fields.stock < 0){
+      report.errors.push(`Ligne ${lineNo} : stock négatif refusé`);
+      continue;
+    }
 
-/* ---------- Lecture d'un fichier image -> base64 (data URL) ---------- */
-function readImageAsDataUrl(file, maxSize = 400){
-  return new Promise((resolve,reject)=>{
-    if(!file.type.startsWith("image/")) return reject(new Error("Ce fichier n'est pas une image."));
-    if(file.size > 5*1024*1024)          return reject(new Error("Image trop lourde (max 5 Mo)."));
-    const reader = new FileReader();
-    reader.onload = () => {
-      // Redimensionne pour ne pas stocker une photo de 4000px
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxSize/Math.max(img.width,img.height));
-        const w = Math.round(img.width*scale), h = Math.round(img.height*scale);
-        const canvas = document.createElement("canvas");
-        canvas.width = w; canvas.height = h;
-        canvas.getContext("2d").drawImage(img,0,0,w,h);
-        resolve(canvas.toDataURL("image/jpeg",0.82));
-      };
-      img.onerror = () => reject(new Error("Image illisible."));
-      img.src = reader.result;
-    };
-    reader.onerror = () => reject(new Error("Lecture du fichier impossible."));
-    reader.readAsDataURL(file);
-  });
+    const changes = [];
+    if(fields.stock !== undefined && fields.stock !== match.v.stock) changes.push(`stock ${match.v.stock}→${fields.stock}`);
+    if(fields.min_stock !== undefined && fields.min_stock !== match.v.min_stock) changes.push(`seuil ${match.v.min_stock}→${fields.min_stock}`);
+    if(fields.sale_price !== undefined && Number(fields.sale_price) !== Number(match.v.sale_price)) changes.push(`PV ${match.v.sale_price}→${fields.sale_price}`);
+    if(fields.purchase_price !== undefined && Number(fields.purchase_price) !== Number(match.v.purchase_price)) changes.push(`PA ${match.v.purchase_price}→${fields.purchase_price}`);
+
+    if(!changes.length){
+      report.skipped.push(`Ligne ${lineNo} : ${match.p.name} — ${match.v.label} (identique)`);
+      continue;
+    }
+
+    if(dryRun){
+      report.updated.push(`${match.p.name} — ${match.v.label} : ${changes.join(", ")}`);
+      continue;
+    }
+
+    try{
+      /* Le stock passe par adjust_stock pour être journalisé */
+      if(fields.stock !== undefined && fields.stock !== match.v.stock){
+        await Stock.adjust({ variantId:match.v.id, value:fields.stock, mode:"set",
+          type:"inventory", reason:"Import CSV" });
+        delete fields.stock;
+      }
+      if(Object.keys(fields).length) await Stock.updateVariant(match.v.id, fields);
+      report.updated.push(`${match.p.name} — ${match.v.label} : ${changes.join(", ")}`);
+    }catch(e){
+      report.errors.push(`Ligne ${lineNo} : ${e.message}`);
+    }
+  }
+
+  return report;
 }

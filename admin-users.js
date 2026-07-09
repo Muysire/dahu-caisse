@@ -1,176 +1,103 @@
 /* ============================================================
-   admin-users.js — Comptes : créer, changer le rôle,
-   changer le mot de passe, désactiver, SUPPRIMER définitivement
+   admin-reports.js — Historique & statistiques
    ============================================================ */
 
-let _usersCache = [];
+/* ---------------- HISTORIQUE ---------------- */
+let _histTab = "ventes";
 
-async function adminUsers(){
-  _usersCache = await Users.list();
-
-  const cards = _usersCache.map(u=>{
-    const isSelf = u.id === App.profile?.id;
-    return `<div class="card pad">
-      <div class="row between" style="align-items:flex-start">
-        <div class="row gap-2">
-          <span style="color:var(--violet-light)">${icon(u.role==="admin"?"users":"package",20)}</span>
-          <div>
-            <div class="fd" style="font-size:20px">${esc(u.username)}${isSelf?' <span class="pill">moi</span>':""}</div>
-            <p class="muted" style="font-size:11px;margin-top:2px">Créé le ${fdate(u.created_at)}</p>
-          </div>
-        </div>
+async function adminHistory(){
+  setAdminContent(pageHead("Historique","Traçabilité complète") + `
+    <div class="row wrap gap-3" style="margin-bottom:20px">
+      <div class="row" style="border:1px solid var(--card-border);border-radius:10px;padding:4px">
+        <button class="btn ${_histTab==="ventes"?"":"ghost"} sm" data-htab="ventes">Ventes</button>
+        <button class="btn ${_histTab==="mouvements"?"":"ghost"} sm" data-htab="mouvements">Mouvements stock</button>
       </div>
-
-      <div class="row gap-2 wrap" style="margin-top:10px">
-        <span class="badge violet">${u.role==="admin"?"Administrateur":"Barman"}</span>
-        ${!u.active ? '<span class="badge out">Inactif</span>' : '<span class="badge ok">Actif</span>'}
+      <div class="row gap-2 muted" style="font-size:14px">
+        <span>Du</span><input class="input" type="date" id="h-from" style="width:auto">
+        <span>au</span><input class="input" type="date" id="h-to" style="width:auto">
       </div>
+    </div>
+    <div id="hist-result"><div class="center muted" style="padding:30px"><div class="spinner" style="margin:0 auto"></div></div></div>`);
 
-      <div class="row gap-2 wrap" style="margin-top:14px">
-        <button class="btn secondary sm" data-pass="${u.id}">${icon("key",14)} Mot de passe</button>
-        <button class="btn ghost sm" data-role="${u.id}">${u.role==="admin"?"→ Barman":"→ Admin"}</button>
-        ${u.active
-          ? `<button class="btn ghost sm" data-deact="${u.id}" ${isSelf?"disabled":""}>Désactiver</button>`
-          : `<button class="btn ghost sm" data-react="${u.id}" style="color:var(--violet-light)">Réactiver</button>`}
-        <button class="btn ghost sm" data-del="${u.id}" style="color:var(--out)" ${isSelf?"disabled":""}>${icon("trash",14)} Supprimer</button>
-      </div>
-    </div>`;
-  }).join("");
+  document.querySelectorAll("[data-htab]").forEach(b=>b.onclick = ()=>{ _histTab = b.dataset.htab; adminHistory(); });
+  const from = document.getElementById("h-from"), to = document.getElementById("h-to");
+  from.onchange = load; to.onchange = load;
 
-  setAdminContent(pageHead("Utilisateurs","Admins & barmen",
-    `<button class="btn" data-new-user>${icon("plus",18)} Nouvel utilisateur</button>`) + `
-    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">${cards}</div>
-    ${DEMO_MODE
-      ? '<p class="muted" style="font-size:12px;margin-top:18px">ℹ️ En mode démo, les comptes sont fictifs et les mots de passe ne sont pas réellement changés. Configure Supabase pour de vrais comptes.</p>'
-      : '<p class="muted" style="font-size:12px;margin-top:18px">⚠️ « Supprimer » efface définitivement le compte (profil + connexion). Cette action est irréversible.</p>'}`);
-
-  document.querySelector("[data-new-user]").onclick = openUserForm;
-
-  document.querySelectorAll("[data-pass]").forEach(b=>b.onclick = ()=>
-    openSetPassword(_usersCache.find(u=>u.id===b.dataset.pass)));
-
-  document.querySelectorAll("[data-role]").forEach(b=>b.onclick = async ()=>{
-    const u = _usersCache.find(x=>x.id===b.dataset.role);
-    const newRole = u.role === "admin" ? "barman" : "admin";
-    const ok = await confirmDialog({ title:"Changer le rôle",
-      message:`Passer ${u.username} en ${newRole === "admin" ? "administrateur" : "barman"} ?`, confirmLabel:"Changer" });
-    if(!ok) return;
-    try{ await Users.setRole(u.id, newRole); toast("Rôle mis à jour"); adminUsers(); }
-    catch(e){ toast(e.message,"error"); }
-  });
-
-  document.querySelectorAll("[data-deact]").forEach(b=>{ if(b.disabled) return;
-    b.onclick = async ()=>{
-      const u = _usersCache.find(x=>x.id===b.dataset.deact);
-      const ok = await confirmDialog({ title:"Désactiver le compte",
-        message:`${u.username} ne pourra plus se connecter, mais son historique est conservé.`, confirmLabel:"Désactiver" });
-      if(!ok) return;
-      try{ await Users.setActive(u.id,false); toast("Utilisateur désactivé"); adminUsers(); }
-      catch(e){ toast(e.message,"error"); }
-    };
-  });
-
-  document.querySelectorAll("[data-react]").forEach(b=>b.onclick = async ()=>{
-    try{ await Users.setActive(b.dataset.react,true); toast("Utilisateur réactivé"); adminUsers(); }
-    catch(e){ toast(e.message,"error"); }
-  });
-
-  /* SUPPRESSION DÉFINITIVE : double confirmation */
-  document.querySelectorAll("[data-del]").forEach(b=>{ if(b.disabled) return;
-    b.onclick = async ()=>{
-      const u = _usersCache.find(x=>x.id===b.dataset.del);
-      const ok = await confirmDialog({
-        title:"Supprimer définitivement",
-        message:`Supprimer le compte « ${u.username} » de la base ? Le profil ET la connexion seront effacés. Cette action est IRRÉVERSIBLE. Préfère « Désactiver » si tu veux garder l'historique.`,
-        confirmLabel:"Supprimer définitivement", danger:true
-      });
-      if(!ok) return;
-      try{ await Users.remove(u.id); toast(`Compte « ${u.username} » supprimé`); adminUsers(); }
-      catch(e){ toast(e.message,"error"); }
-    };
-  });
+  async function load(){
+    const res = document.getElementById("hist-result");
+    if(_histTab === "ventes"){
+      const sales = await Sales.list(from.value, to.value);
+      res.innerHTML = sales.length
+        ? `<div class="card" style="overflow-x:auto"><table>
+            <thead><tr><th>Date</th><th>Articles</th><th>Détail</th><th style="text-align:right">Total</th></tr></thead>
+            <tbody>${sales.map(s=>`<tr>
+              <td class="fm muted" style="font-size:12px;white-space:nowrap">${fdatetime(s.created_at)}</td>
+              <td>${s.item_count}</td>
+              <td class="muted" style="font-size:12px">${(s.items||[]).map(it=>`${esc(it.product_name)} ×${it.qty}`).join(", ")}</td>
+              <td style="text-align:right" class="fm violet-text">${euro(s.total)}</td>
+            </tr>`).join("")}</tbody></table></div>`
+        : `<div class="card pad center"><p class="muted">Aucune vente.</p></div>`;
+    }else{
+      const moves = await Stock.movements();
+      res.innerHTML = moves.length
+        ? `<div class="card" style="overflow-x:auto"><table>
+            <thead><tr><th>Date</th><th>Produit</th><th>Type</th><th class="center">Variation</th><th class="center">Stock après</th><th>Motif</th></tr></thead>
+            <tbody>${moves.map(m=>`<tr>
+              <td class="fm muted" style="font-size:12px;white-space:nowrap">${fdatetime(m.created_at)}</td>
+              <td>${esc(m.variant?.product?.name||"—")} <span class="muted">${m.variant?.label?"— "+esc(m.variant.label):""}</span></td>
+              <td class="muted" style="font-size:14px">${movementLabel(m.type)}</td>
+              <td class="center fm" style="font-weight:700;color:${m.qty_delta<0?"var(--out)":"var(--ok)"}">${m.qty_delta>0?"+":""}${m.qty_delta}</td>
+              <td class="center fm">${m.stock_after}</td>
+              <td class="muted" style="font-size:12px">${esc(m.reason||"—")}</td>
+            </tr>`).join("")}</tbody></table></div>`
+        : `<div class="card pad center"><p class="muted">Aucun mouvement.</p></div>`;
+    }
+  }
+  load();
 }
 
-/* ---------- Créer un utilisateur ---------- */
-function openUserForm(){
-  let role = "barman";
-  const box = document.createElement("div");
+/* ---------------- STATISTIQUES ---------------- */
+async function adminStats(){
+  const [stats, top, daily] = await Promise.all([
+    Stats.dashboard(), Stats.topProducts(8), Stats.dailyRevenue(14)
+  ]);
 
-  function paint(){
-    box.innerHTML = `
-      <div class="row" style="border:1px solid var(--card-border);border-radius:10px;padding:4px;margin-bottom:16px">
-        <button class="btn ${role==="barman"?"":"ghost"} sm" style="flex:1" data-r="barman">🍺 Barman</button>
-        <button class="btn ${role==="admin"?"":"ghost"} sm" style="flex:1" data-r="admin">🔧 Admin</button>
+  const card = (label,value)=>`<div class="card kpi"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+  const avg = stats.totalSales > 0 ? stats.totalRevenue/stats.totalSales : 0;
+
+  const maxDaily = Math.max(1, ...daily.map(d=>d.revenue));
+  const dailyBars = daily.length
+    ? daily.map(d=>`<div class="bar-row">
+        <span class="lbl fm">${d.day}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${(d.revenue/maxDaily*100).toFixed(1)}%"></div></div>
+        <span class="val">${euro(d.revenue)}</span></div>`).join("")
+    : `<p class="center muted" style="padding:20px">Pas encore de données</p>`;
+
+  const maxTop = Math.max(1, ...top.map(t=>t.qty));
+  const topBars = top.length
+    ? top.map(t=>`<div class="bar-row">
+        <span class="lbl">${esc(t.product_name)}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${(t.qty/maxTop*100).toFixed(1)}%"></div></div>
+        <span class="val">${t.qty}</span></div>`).join("")
+    : `<p class="center muted" style="padding:20px">Pas encore de données</p>`;
+
+  const topTable = top.length
+    ? `<div class="card" style="overflow-x:auto;margin-top:24px"><table>
+        <thead><tr><th>Produit</th><th class="center">Quantité</th><th style="text-align:right">CA généré</th></tr></thead>
+        <tbody>${top.map(t=>`<tr><td>${esc(t.product_name)}</td><td class="center fm">${t.qty}</td>
+          <td style="text-align:right" class="fm violet-text">${euro(t.revenue)}</td></tr>`).join("")}</tbody></table></div>`
+    : "";
+
+  setAdminContent(pageHead("Statistiques","Performance des ventes") + `
+    <div class="grid" style="gap:24px">
+      <div class="kpi-grid">
+        ${card("CA total",euro(stats.totalRevenue))}
+        ${card("Ventes",stats.totalSales)}
+        ${card("CA du jour",euro(stats.todayRevenue))}
+        ${card("Panier moyen",euro(avg))}
       </div>
-      <label class="field"><span>Nom d'utilisateur (affiché)</span><input class="input" id="u-name" placeholder="ex : Léo"></label>
-      <label class="field"><span>Email de connexion</span><input class="input" type="email" id="u-email" placeholder="leo@dahu.fr"></label>
-      <label class="field"><span>Mot de passe (6+ caractères)</span><input class="input" type="password" id="u-pass"></label>
-      <p class="muted" style="background:var(--bg);border-radius:8px;padding:12px;font-size:12px">
-        ${role==="barman" ? "Le barman n'aura accès qu'à la caisse." : "L'admin aura accès à tout le back-office."}
-        Transmets-lui ses identifiants.
-      </p>
-      <div class="modal-foot" data-modal-actions>
-        <button class="btn secondary" data-close-modal>Fermer</button>
-        <button class="btn" id="u-save">Créer</button>
-      </div>`;
-    box.querySelectorAll("[data-r]").forEach(b=>b.onclick = ()=>{ role = b.dataset.r; paint(); });
-    box.querySelector("#u-save").onclick = save;
-    bindCloseButtons(box);
-  }
-
-  async function save(){
-    const username = box.querySelector("#u-name").value.trim();
-    const email    = box.querySelector("#u-email").value.trim();
-    const password = box.querySelector("#u-pass").value;
-    if(!username || !email || password.length < 6) return toast("Nom, email et mot de passe (6+) requis","error");
-    try{
-      const r = await Auth.createUser({ username, email, password, role });
-      if(r.error) return toast(r.error,"error");
-      toast(`Compte créé pour ${username}`);
-      closeModal(); adminUsers();
-    }catch(e){ toast(e.message,"error"); }
-  }
-
-  paint();
-  const ov = openModal({ title:"Nouvel utilisateur", body:box, showFooterClose:false });
-  bindCloseButtons(ov);
-}
-
-/* ---------- Changer le mot de passe d'un utilisateur ---------- */
-function openSetPassword(user){
-  const isSelf = user.id === App.profile?.id;
-  const box = document.createElement("div");
-  box.innerHTML = `
-    <p class="muted" style="font-size:14px;margin-bottom:14px">Compte : <strong style="color:var(--text)">${esc(user.username)}</strong></p>
-    <label class="field"><span>Nouveau mot de passe (6+ caractères)</span>
-      <input class="input" type="password" id="sp-1" autocomplete="new-password"></label>
-    <label class="field"><span>Confirmer</span>
-      <input class="input" type="password" id="sp-2" autocomplete="new-password"></label>
-    ${DEMO_MODE
-      ? '<p class="muted" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px">ℹ️ Mode démo : le changement est simulé.</p>'
-      : (isSelf
-        ? ""
-        : `<p class="muted" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px">
-             Nécessite la fonction SQL <span class="fm">admin_set_password</span> (fournie dans database.sql).
-             Sinon, utilise « Envoyer un lien de réinitialisation ».</p>`)}
-    <div class="modal-foot" data-modal-actions>
-      <button class="btn secondary" data-close-modal>Fermer</button>
-      <button class="btn" id="sp-save">Changer</button>
-    </div>`;
-
-  box.querySelector("#sp-save").onclick = async ()=>{
-    const p1 = box.querySelector("#sp-1").value, p2 = box.querySelector("#sp-2").value;
-    if(p1.length < 6) return toast("6 caractères minimum","error");
-    if(p1 !== p2)     return toast("Les mots de passe ne correspondent pas","error");
-    try{
-      /* Son propre mot de passe : passe par l'API auth standard */
-      const r = isSelf ? await Auth.changeOwnPassword(p1) : await Users.setPassword(user.id, p1);
-      if(r.error) return toast(r.error,"error");
-      toast(r.demo ? "Mode démo : changement simulé" : `Mot de passe de ${user.username} modifié`);
-      closeModal();
-    }catch(e){ toast(e.message,"error"); }
-  };
-
-  const ov = openModal({ title:"Changer le mot de passe", body:box, showFooterClose:false });
-  bindCloseButtons(ov);
+      <div class="card pad"><h2 class="violet-text" style="font-size:24px;margin-bottom:18px">CA des 14 derniers jours</h2>${dailyBars}</div>
+      <div class="card pad"><h2 class="violet-text" style="font-size:24px;margin-bottom:18px">Top produits (quantités)</h2>${topBars}</div>
+      ${topTable}
+    </div>`);
 }

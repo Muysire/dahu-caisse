@@ -1,0 +1,80 @@
+/* ============================================================
+   01-base.css — Variables, reset, typographie, utilitaires
+   Charte Dahu Sound System : violet néon / noir violacé
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;500;600;700&family=Ubuntu+Mono:wght@400;700&display=swap');
+
+:root{
+  /* Couleurs */
+  --violet:#7c3aed; --violet-light:#a78bfa; --violet-glow:#8b5cf6; --violet-deep:#4c1d95;
+  --link-blue:#5eb3ff;
+  --bg:#0a0710; --card:#120d1c; --card-2:#160f24; --card-border:#241a38;
+  --text:#f2eefb; --text-muted:#9a8fb0;
+  --ok:#22c55e; --low:#f59e0b; --out:#ef4444;
+  /* Polices */
+  --fd:'Bebas Neue',sans-serif;   /* Titres */
+  --fb:'Rajdhani',sans-serif;     /* Corps */
+  --fm:'Ubuntu Mono',monospace;   /* Chiffres */
+  /* Formes */
+  --radius:14px;
+  --glow:0 0 22px rgba(124,58,237,.45);
+  --glow-lg:0 0 32px rgba(167,139,250,.55);
+  --shadow:0 8px 30px rgba(124,58,237,.18);
+}
+
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100vh;overflow-x:hidden;font-size:16px}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(circle at 15% 0%,rgba(124,58,237,.16) 0%,transparent 45%),
+             radial-gradient(circle at 85% 100%,rgba(76,29,149,.18) 0%,transparent 50%)}
+a{color:var(--link-blue);text-decoration:none}
+h1,h2,h3{font-family:var(--fd);font-weight:400;letter-spacing:1px;line-height:1}
+
+/* Utilitaires */
+.fd{font-family:var(--fd);letter-spacing:1px}
+.fm{font-family:var(--fm)}
+.muted{color:var(--text-muted)}
+.center{text-align:center}
+.violet-text{color:var(--violet-light)}
+.hidden{display:none!important}
+.row{display:flex;align-items:center}
+.between{justify-content:space-between}
+.wrap{flex-wrap:wrap}
+.gap-2{gap:8px} .gap-3{gap:12px} .gap-4{gap:16px}
+.grid{display:grid;gap:16px}
+.mono{font-family:var(--fm)}
+.pill{font-size:10px;font-weight:700;text-transform:uppercase;background:rgba(124,58,237,.2);
+  color:var(--violet-light);padding:2px 7px;border-radius:6px;letter-spacing:.5px}
+
+/* Bandeaux décoratifs */
+.banner{height:6px;background:linear-gradient(90deg,var(--violet-deep),var(--violet),var(--violet-light),var(--violet),var(--violet-deep))}
+.divider{height:3px;border-radius:2px;margin:14px 0;
+  background:linear-gradient(90deg,transparent,var(--violet),var(--violet-light),var(--violet),transparent)}
+
+/* Logo */
+.logo{display:inline-flex;align-items:center;gap:12px}
+.logo-mark{width:46px;height:46px;border-radius:50%;border:2px solid var(--violet);display:grid;place-items:center;
+  font-family:var(--fd);font-size:26px;color:var(--violet-light);
+  background:radial-gradient(circle at 50% 40%,rgba(139,92,246,.25),transparent 70%);
+  filter:drop-shadow(0 0 12px rgba(139,92,246,.5))}
+.logo-mark.lg{width:96px;height:96px;font-size:54px}
+.logo-text .l1{font-family:var(--fd);font-size:22px;letter-spacing:3px;color:var(--violet-light);line-height:1}
+.logo-text .l2{font-family:var(--fm);font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--text-muted)}
+
+/* Animations */
+@keyframes pop{from{transform:scale(.94);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes slideIn{from{transform:translateX(-100%)}to{transform:translateX(0)}}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--violet);border-radius:5px}
+
+/* Écrans / chargement */
+.screen{display:none}
+.screen.active{display:block}
+.center-screen{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px}
+.spinner{width:40px;height:40px;border:3px solid var(--card-border);border-top-color:var(--violet);border-radius:50%;animation:spin .8s linear infinite}
+.demo-note{background:linear-gradient(90deg,var(--violet-deep),var(--violet));color:#fff;text-align:center;padding:8px 12px;font-size:13px;font-weight:600}
