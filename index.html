@@ -7,11 +7,34 @@
   <meta name="description" content="Caisse et gestion de stock — Dahu Sound System">
   <meta name="theme-color" content="#7c3aed">
 
-  <!-- ========== FEUILLES DE STYLE (dans l'ordre) ========== -->
-  <link rel="stylesheet" href="css/01-base.css">          <!-- variables, reset, typo  -->
-  <link rel="stylesheet" href="css/02-components.css">    <!-- boutons, cartes, modales -->
-  <link rel="stylesheet" href="css/03-layout-public.css"> <!-- login, menu, caisse      -->
-  <link rel="stylesheet" href="css/04-layout-admin.css">  <!-- back-office              -->
+  <!-- ========== FEUILLES DE STYLE ========== -->
+  <link rel="stylesheet" href="css/01-base.css">
+  <link rel="stylesheet" href="css/02-components.css">
+  <link rel="stylesheet" href="css/03-layout-public.css">
+  <link rel="stylesheet" href="css/04-layout-admin.css">
+
+  <!-- Style de l'ecran de diagnostic. Ecrit ICI volontairement :
+       il fonctionne meme si le dossier css/ est absent. -->
+  <style>
+    #dahu-diag{display:none;position:fixed;inset:0;z-index:9999;overflow-y:auto;
+      background:#0a0710;color:#f2eefb;padding:32px 20px;
+      font-family:system-ui,-apple-system,'Segoe UI',sans-serif;line-height:1.55}
+    #dahu-diag .box{max-width:680px;margin:0 auto}
+    #dahu-diag h1{font-size:26px;color:#a78bfa;margin:0 0 6px}
+    #dahu-diag h2{font-size:17px;color:#a78bfa;margin:26px 0 10px}
+    #dahu-diag p{margin:0 0 12px;color:#c9c0dc}
+    #dahu-diag code,#dahu-diag .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+    #dahu-diag .card{background:#120d1c;border:1px solid #241a38;border-radius:12px;padding:16px;margin-bottom:14px}
+    #dahu-diag .bad{color:#ef4444}
+    #dahu-diag .good{color:#22c55e}
+    #dahu-diag ul{margin:8px 0 0;padding-left:20px}
+    #dahu-diag li{margin-bottom:4px}
+    #dahu-diag .fix{background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.4);border-radius:12px;padding:16px}
+    #dahu-diag .tag{display:inline-block;background:#4c1d95;color:#fff;font-size:11px;font-weight:700;
+      letter-spacing:1px;text-transform:uppercase;padding:3px 9px;border-radius:6px;margin-bottom:10px}
+    #dahu-diag .btn{display:inline-block;margin-top:14px;background:#7c3aed;color:#fff;border:none;
+      padding:10px 18px;border-radius:10px;font-weight:700;cursor:pointer;font-size:14px}
+  </style>
 </head>
 <body>
 
@@ -23,39 +46,215 @@
     </div>
   </div>
 
-  <!-- ========== SCRIPTS ==========
-       Ordre imposé : config → utils → ui → données → pages → routeur.
-       On utilise des <script> classiques (pas de modules ES6) pour que
-       le site fonctionne aussi en double-clic (protocole file://).
+  <!-- Ecran de diagnostic : masque tant que tout va bien -->
+  <div id="dahu-diag"><div class="box"></div></div>
+
+
+  <!-- ============================================================
+       SURVEILLANCE — doit etre le TOUT PREMIER script.
+       Role : si un fichier manque ou plante, afficher un message
+       clair au lieu de laisser tourner le spinner indefiniment.
+       ============================================================ -->
+  <script>
+    window.__DAHU = { failed: [], booted: false, fatal: null };
+
+    /* Appele par l'attribut onerror de chaque <script> introuvable */
+    function __fail(src){ window.__DAHU.failed.push(src); }
+
+    /* Erreurs JS non rattrapees */
+    window.addEventListener("error", function(e){
+      if(e.message && !window.__DAHU.fatal) window.__DAHU.fatal = e.message;
+    });
+    window.addEventListener("unhandledrejection", function(e){
+      if(!window.__DAHU.fatal) window.__DAHU.fatal = (e.reason && e.reason.message) || String(e.reason);
+    });
+
+    /* Le CSS est-il arrive ? (on lit une variable definie dans 01-base.css) */
+    function __cssLoaded(){
+      var v = getComputedStyle(document.documentElement).getPropertyValue("--violet");
+      return !!(v && v.trim() !== "");
+    }
+
+    /* Chaque script a-t-il bien defini ce qu'on attend de lui ? */
+    var __EXPECT = [
+      ["js/core/config.js",          function(){ return typeof DAHU_CONFIG !== "undefined"; }],
+      ["js/core/utils.js",           function(){ return typeof esc === "function"; }],
+      ["js/core/ui.js",              function(){ return typeof openModal === "function"; }],
+      ["js/core/demo-data.js",       function(){ return typeof DemoDB !== "undefined"; }],
+      ["js/core/csv.js",             function(){ return typeof importStockCsv === "function"; }],
+      ["js/core/data-auth.js",       function(){ return typeof Auth !== "undefined"; }],
+      ["js/core/data-catalog.js",    function(){ return typeof Products !== "undefined"; }],
+      ["js/pages/page-login.js",     function(){ return typeof renderLogin === "function"; }],
+      ["js/pages/page-menu.js",      function(){ return typeof renderMenu === "function"; }],
+      ["js/pages/page-caisse.js",    function(){ return typeof renderCaisse === "function"; }],
+      ["js/admin/admin-shell.js",    function(){ return typeof renderAdmin === "function"; }],
+      ["js/admin/admin-dashboard.js",function(){ return typeof adminDashboard === "function"; }],
+      ["js/admin/admin-products.js", function(){ return typeof adminProducts === "function"; }],
+      ["js/admin/admin-stock.js",    function(){ return typeof adminStock === "function"; }],
+      ["js/admin/admin-reports.js",  function(){ return typeof adminStats === "function"; }],
+      ["js/admin/admin-exports.js",  function(){ return typeof adminExports === "function"; }],
+      ["js/admin/admin-users.js",    function(){ return typeof adminUsers === "function"; }],
+      ["js/router.js",               function(){ return typeof boot === "function"; }]
+    ];
+
+    function __missingScripts(){
+      var missing = [];
+      for(var i=0; i<__EXPECT.length; i++){
+        var ok = false;
+        try { ok = __EXPECT[i][1](); } catch(e){ ok = false; }
+        if(!ok) missing.push(__EXPECT[i][0]);
+      }
+      return missing;
+    }
+
+    /* Affiche l'ecran de diagnostic */
+    function __showDiag(){
+      var missing = __missingScripts();
+      var cssOk   = __cssLoaded();
+      var isFile  = location.protocol === "file:";
+      var fatal   = window.__DAHU.fatal;
+
+      var html = '<span class="tag">Dahu Caisse — Diagnostic</span>' +
+        '<h1>Le site n\'a pas pu demarrer</h1>' +
+        '<p>Voici precisement ce qui manque. C\'est reparable en quelques clics.</p>';
+
+      /* Cas 1 : des fichiers ne sont pas arrives */
+      if(missing.length || !cssOk){
+        html += '<h2>❌ Fichiers introuvables</h2><div class="card">';
+        if(!cssOk) html += '<p class="bad">• Le dossier <code>css/</code> n\'a pas ete trouve.</p>';
+        if(missing.length){
+          html += '<p class="bad">• ' + missing.length + ' fichier(s) JavaScript manquant(s) :</p><ul class="mono">';
+          for(var i=0;i<missing.length;i++) html += '<li class="bad">' + missing[i] + '</li>';
+          html += '</ul>';
+        }
+        html += '</div><h2>✅ Comment reparer</h2><div class="fix">';
+        if(isFile){
+          html += '<p><strong>Tu as ouvert le fichier en double-clic.</strong></p>' +
+            '<p><code>index.html</code> doit rester <strong>a cote</strong> des dossiers ' +
+            '<code>css/</code> et <code>js/</code>, dans le meme dossier.</p>' +
+            '<p>Ne deplace pas <code>index.html</code> tout seul : ouvre-le depuis le dossier ' +
+            '<code>dahu-caisse/</code> complet.</p>';
+        }else{
+          html += '<p><strong>Tu es sur GitHub Pages.</strong> Tu n\'as probablement uploade que ' +
+            '<code>index.html</code>, sans les dossiers.</p>' +
+            '<p>Sur ton depot GitHub, tu dois voir <strong>3 elements</strong> a la racine :</p>' +
+            '<ul class="mono"><li>index.html</li><li>css/</li><li>js/</li></ul>' +
+            '<p style="margin-top:12px">S\'il en manque : <strong>Add file → Upload files</strong>, ' +
+            'puis glisse les dossiers <code>css</code> et <code>js</code> <em>entiers</em> ' +
+            '(pas fichier par fichier), et clique <strong>Commit changes</strong>.</p>' +
+            '<p>Attends 1 minute, puis recharge avec <strong>Ctrl+Maj+R</strong>.</p>';
+        }
+        html += '</div>';
+      }
+      /* Cas 2 : tout est la, mais le JS a plante */
+      else if(fatal){
+        html += '<h2>⚠️ Erreur au demarrage</h2><div class="card"><p class="bad mono">' +
+          String(fatal).replace(/</g,"&lt;") + '</p></div>' +
+          '<h2>✅ Piste la plus probable</h2><div class="fix">' +
+          '<p>Verifie <code>js/core/config.js</code> : <code>SUPABASE_URL</code> et ' +
+          '<code>SUPABASE_ANON_KEY</code> doivent etre soit <strong>toutes les deux vides</strong> ' +
+          '(mode demo), soit <strong>toutes les deux remplies</strong> et correctes.</p>' +
+          '<p>Une virgule ou un guillemet en trop suffit a tout bloquer.</p></div>';
+      }
+      /* Cas 3 : rien n'a demarre sans raison identifiee */
+      else{
+        html += '<h2>⚠️ Demarrage trop long</h2><div class="card">' +
+          '<p>Les fichiers sont presents mais l\'application n\'a pas repondu.</p></div>' +
+          '<h2>✅ A essayer</h2><div class="fix">' +
+          '<p>1. Recharge la page avec <strong>Ctrl+Maj+R</strong> (vide le cache).</p>' +
+          '<p>2. Si tu as rempli <code>js/core/config.js</code>, verifie ta connexion Internet : ' +
+          'le site doit joindre Supabase.</p>' +
+          '<p>3. Ouvre la console (<strong>F12</strong>) pour lire le message d\'erreur.</p></div>';
+      }
+
+      html += '<h2>Informations techniques</h2>' +
+        '<div class="card mono" style="font-size:12px;color:#9a8fb0">' +
+        '<div>Adresse : ' + location.href.replace(/</g,"&lt;") + '</div>' +
+        '<div>Protocole : ' + location.protocol + '</div>' +
+        '<div>CSS charge : ' + (cssOk ? '<span class="good">oui</span>' : '<span class="bad">non</span>') + '</div>' +
+        '<div>Scripts manquants : ' + missing.length + '</div>' +
+        '<div>Fichiers en erreur reseau : ' + window.__DAHU.failed.length + '</div></div>' +
+        '<button class="btn" onclick="location.reload()">Recharger la page</button>';
+
+      var diag = document.getElementById("dahu-diag");
+      diag.querySelector(".box").innerHTML = html;
+      diag.style.display = "block";
+      var app = document.getElementById("app");
+      if(app) app.style.display = "none";
+    }
+
+    /* Appele par router.js quand l'application a reellement demarre */
+    function __booted(){ window.__DAHU.booted = true; }
+
+    /* Erreur fatale signalee par router.js */
+    function __fatal(msg){ window.__DAHU.fatal = msg; __showDiag(); }
+
+    /* ------------------------------------------------------------
+       Verification d'INTEGRITE, appelee par router.js AVANT de demarrer.
+       Retourne true si tout est present. Sinon affiche le diagnostic
+       et retourne false : l'application ne demarre pas sur une base
+       incomplete (sinon on aurait un site sans style, ou une page
+       admin qui plante au premier clic).
+       ------------------------------------------------------------ */
+    function __checkIntegrity(){
+      var missing = __missingScripts();
+      var cssOk   = __cssLoaded();
+      if(missing.length || !cssOk){ __showDiag(); return false; }
+      return true;
+    }
+
+    window.addEventListener("load", function(){
+      /* Controle rapide : si router.js lui-meme est absent, boot() ne sera
+         JAMAIS appele et __checkIntegrity() non plus. On verifie donc ici. */
+      setTimeout(function(){
+        if(window.__DAHU.booted) return;
+        if(__missingScripts().length || !__cssLoaded()) __showDiag();
+      }, 500);
+
+      /* Filet de securite : rien n'a demarre au bout de 10 s
+         (ex. Supabase injoignable et router.js sans garde-fou) */
+      setTimeout(function(){
+        if(!window.__DAHU.booted) __showDiag();
+      }, 10000);
+    });
+  </script>
+
+
+  <!-- ============================================================
+       SCRIPTS DE L'APPLICATION
+       Ordre impose : config -> utils -> ui -> donnees -> pages -> routeur.
+       Ce sont des <script> classiques (pas de modules ES6) : c'est ce
+       qui permet d'ouvrir le site en double-clic (protocole file://).
+       L'attribut onerror signale un fichier introuvable.
        ============================================================ -->
 
   <!-- 1. Noyau -->
-  <script src="js/core/config.js"></script>        <!-- ← LE SEUL FICHIER À MODIFIER -->
-  <script src="js/core/utils.js"></script>
-  <script src="js/core/ui.js"></script>
-  <script src="js/core/demo-data.js"></script>
-  <script src="js/core/csv.js"></script>
+  <script src="js/core/config.js"       onerror="__fail(this.src)"></script>  <!-- LE SEUL FICHIER A MODIFIER -->
+  <script src="js/core/utils.js"        onerror="__fail(this.src)"></script>
+  <script src="js/core/ui.js"           onerror="__fail(this.src)"></script>
+  <script src="js/core/demo-data.js"    onerror="__fail(this.src)"></script>
+  <script src="js/core/csv.js"          onerror="__fail(this.src)"></script>
 
-  <!-- 2. Couche données -->
-  <script src="js/core/data-auth.js"></script>
-  <script src="js/core/data-catalog.js"></script>
+  <!-- 2. Couche donnees -->
+  <script src="js/core/data-auth.js"    onerror="__fail(this.src)"></script>
+  <script src="js/core/data-catalog.js" onerror="__fail(this.src)"></script>
 
   <!-- 3. Pages publiques -->
-  <script src="js/pages/page-login.js"></script>
-  <script src="js/pages/page-menu.js"></script>
-  <script src="js/pages/page-caisse.js"></script>
+  <script src="js/pages/page-login.js"  onerror="__fail(this.src)"></script>
+  <script src="js/pages/page-menu.js"   onerror="__fail(this.src)"></script>
+  <script src="js/pages/page-caisse.js" onerror="__fail(this.src)"></script>
 
   <!-- 4. Back-office -->
-  <script src="js/admin/admin-shell.js"></script>
-  <script src="js/admin/admin-dashboard.js"></script>
-  <script src="js/admin/admin-products.js"></script>
-  <script src="js/admin/admin-stock.js"></script>
-  <script src="js/admin/admin-reports.js"></script>
-  <script src="js/admin/admin-exports.js"></script>
-  <script src="js/admin/admin-users.js"></script>
+  <script src="js/admin/admin-shell.js"     onerror="__fail(this.src)"></script>
+  <script src="js/admin/admin-dashboard.js" onerror="__fail(this.src)"></script>
+  <script src="js/admin/admin-products.js"  onerror="__fail(this.src)"></script>
+  <script src="js/admin/admin-stock.js"     onerror="__fail(this.src)"></script>
+  <script src="js/admin/admin-reports.js"   onerror="__fail(this.src)"></script>
+  <script src="js/admin/admin-exports.js"   onerror="__fail(this.src)"></script>
+  <script src="js/admin/admin-users.js"     onerror="__fail(this.src)"></script>
 
-  <!-- 5. Routeur (démarre l'application) -->
-  <script src="js/router.js"></script>
+  <!-- 5. Routeur (demarre l'application) -->
+  <script src="js/router.js"            onerror="__fail(this.src)"></script>
 
 </body>
 </html>
