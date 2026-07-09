@@ -214,7 +214,7 @@ tbody tr:last-child td{border-bottom:none}
    deux valeurs (voir le guide). Tant qu'elles sont vides, le
    site tourne en MODE DÉMO avec des données d'exemple locales.
    ============================================================ */
-const DAHU_CONFIG = { SUPABASE_URL:"", SUPABASE_ANON_KEY:"" };
+const DAHU_CONFIG = { SUPABASE_URL:"https://jgvrzkrlgotzzmwuszkd.supabase.co", SUPABASE_ANON_KEY:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpndnJ6a3JsZ290enptd3VzemtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1OTQ5MzMsImV4cCI6MjA5OTE3MDkzM30.8RIPkPy6PiujS5m1-Dx4TXQKkOQcPgMowHrHXyOP6hk" };
 const DEMO_MODE = !DAHU_CONFIG.SUPABASE_URL || !DAHU_CONFIG.SUPABASE_ANON_KEY;
 const DEMO_ACCOUNTS = [
   { email:"admin@dahu.fr", password:"admin", username:"Théo", role:"admin" },
